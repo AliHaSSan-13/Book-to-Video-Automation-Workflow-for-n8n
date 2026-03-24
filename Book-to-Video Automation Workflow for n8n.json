@@ -1,0 +1,2043 @@
+{
+  "name": "My workflow 2",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "// 1. Access Data\nconst body = $json.body || $json;\nconst binary = $binary || {};\n\n// 2. Auto-detect if a file was uploaded (handles 'data', 'data0', or any other key)\nconst binaryKeys = Object.keys(binary);\nconst firstFileKey = binaryKeys.length > 0 ? binaryKeys[0] : null;\n\nconst hasFile = !!firstFileKey;\nconst hasText = body.book_name;\n\nif (hasText && hasFile) {\n  throw new Error(\"Invalid request: choose file OR book_name, not both\");\n}\n\n// 3. Handle File Upload\nif (hasFile) {\n  const file = binary[firstFileKey];\n  const ext = (file.fileExtension || \"\").toLowerCase();\n  \n  if (![\"pdf\"].includes(ext)) {\n    throw new Error(`Unsupported file type: ${ext}`);\n  }\n\n  // We return the binary object under the key 'data' explicitly\n  // This ensures the next node always finds it as 'data', regardless of input name\n  return [{\n    json: {\n      inputType: \"file\",\n      fileName: file.fileName,\n      fileType: ext,\n      mimeType: file.mimeType,\n      fileSize: file.fileSize,\n      receivedAt: new Date().toISOString()\n    },\n    binary: {\n      data: file\n    }\n  }];\n}\n\n// 4. Handle Text Input\n// 4. Handle Text Input\nif (hasText) {\n  let name = body.book_name;\n  if (typeof name !== 'string') name = String(name);\n  name = name.trim();\n  \n  if (name.length < 3) {\n    throw new Error(\"book_name is too short\");\n  }\n\n  const normalizedTitle = name\n    .toLowerCase()\n    .replace(/[^a-z0-9\\s]/g, \"\")  // keep letters, numbers, spaces\n    .trim()\n    .replace(/\\s+/g, \"_\");        // replace spaces with underscores\n\n  return [{\n    json: {\n      inputType: \"text\",\n      originalTitle: name,\n      normalizedTitle,   // updated safe version\n      receivedAt: new Date().toISOString()\n    }\n  }];\n}\n\nthrow new Error(\"Invalid request: provide book_name OR upload file\");\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        496,
+        816
+      ],
+      "id": "da647abc-29dd-4e27-875c-9618d250460d",
+      "name": "Request Validator"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "994b889e-d043-42b4-a6cf-411b596f18ee",
+              "leftValue": "={{ $json.book_id !== undefined }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1168,
+        896
+      ],
+      "id": "65b55f76-b819-4187-948d-665d994d2a67",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "request-book",
+        "responseMode": "responseNode",
+        "options": {
+          "binaryPropertyName": "data"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        272,
+        816
+      ],
+      "id": "1e3efeb4-0dca-490c-bc46-618dce6d4724",
+      "name": "Main webhook",
+      "webhookId": "50cb4cd7-729b-414f-9d44-463c9a26d250",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const bookText = $json.cleanedText;\n\nif (!bookText || typeof bookText !== 'string') {\n  throw new Error('bookText missing or invalid');\n}\n\nconst CHARS_PER_TOKEN = 3.5;\nconst MAX_TOKENS = 240000;\n\nconst approxTokens = Math.ceil(bookText.length / CHARS_PER_TOKEN);\n\nreturn [{\n  json: {\n    bookLength: bookText.length,\n    approxTokens,\n    exceedsLimit: approxTokens > MAX_TOKENS,\n    recommendedChunks: Math.ceil(approxTokens / MAX_TOKENS),\n    wordCount: bookText.split(/\\s+/).length\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3408,
+        624
+      ],
+      "id": "a7ad487f-1cbf-4c27-a5fe-461a4e34eba1",
+      "name": "Check token limit"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=You are a master storyteller and literary analyst. Your mission is to transform this book into a captivating 5-10 minute video narration that rivals the best YouTube book summary channels.\n\nCRITICAL REQUIREMENTS:\n\n**Book Intro First (at the very beginning):**\nStart the script with a clean, factual introduction to the book itself:\n- Book title\n- Author name\n- Publication year (if relevant or widely known)\n- Genre or broad category (e.g., dystopian fiction, psychological thriller, classic philosophy, modern self-help, etc.)\n- Optional: one short, non-spoiler sentence about its cultural/literary status or why it became iconic (e.g., \"a book that has sold millions and shaped generations\", \"a timeless masterpiece of speculative fiction\", \"the work that redefined modern productivity\")\nDo NOT mention any plot points, characters, main ideas, events, revelations, or content of the book in the intro.\n\n**Hook Immediately After (next 10 seconds):**\nRight after the book intro, hit the viewer with the single most dramatic moment, shocking question, provocative statement, or mysterious revelation from the book — without naming characters or giving context yet. The goal is pure intrigue: make them NEED to keep watching.\n\n**Adapt to Genre:**\n   - Fiction: Emphasize plot twists, character transformation, emotional intensity\n   - Non-fiction: Highlight counterintuitive facts, paradigm-shifting ideas, real-world impact\n   - Historical: Bring historical figures and moments to life with vivid, human detail\n   - Philosophy/Self-help: Bridge timeless ideas to today’s world using clear, relatable analogies\n\n**Pacing:** Mix short, punchy sentences for tension and urgency with longer, flowing sentences for reflection and atmosphere.\n\n**Sensory & Cinematic Language:** Show, don’t tell. Instead of “the city was dirty,” say “grime-coated alleyways reeked of yesterday’s rain and tomorrow’s despair.”\n\n**Target Length:** 1200–2000 words (roughly 5–8 minutes when spoken at natural pace)\n\nSTRUCTURE:\n\n**Book Intro (50–100 words)**\nFactual presentation of title, author, year, genre, and one non-spoiler prestige sentence. End with a smooth transition that primes curiosity.\n\n**Hook (50–100 words)**\nThe most gripping, spoiler-light opening line/scene/question/fact from the book.\n\n**Setup (200–300 words)**\nIntroduce the world, main players (characters/concepts/figures), stakes, and tone — all vividly, without rushing into the plot.\n\n**Main Narrative (800–1200 words)**\nChronological retelling of the core journey. Build suspense like a thriller:\n- “But then…” for every major reversal\n- “What no one realized…” for dramatic irony\n- “Against impossible odds…” for climactic turns\n- Use dialogue snippets, sensory details, and emotional beats\n\n**Themes & Modern Relevance (200–400 words)**\nConnect the book’s core message/impact to today’s world. Why does this book still matter in 2025+? What can viewers carry into their own lives? Close with one powerful, open-ended question or subtle call-to-action.\n\nBOOK TEXT:\n{{ $('Extract from pdf').isExecuted ? $('Extract from pdf').item.json.text : $('Clean Text').item.json.cleanedText }}\n\nOUTPUT ONLY THE NARRATION SCRIPT.\nNo labels, no headings, no instructions, no markdown — just the raw, spoken-ready narration text from start to finish."
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        4656,
+        416
+      ],
+      "id": "f7468f7e-579b-4bb7-8a81-89dcdc289071",
+      "name": "Master Sumarrizer",
+      "retryOnFail": true,
+      "notesInFlow": true,
+      "notes": "Refactor Prompt"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n  b.id AS book_id,\n  b.original_title,\n  b.normalized_title,\n  b.source,\n  b.created_at,\n  m.file_path\nFROM books b\nLEFT JOIN media_assets m \n  ON m.book_id = b.id\nWHERE b.normalized_title = $1\nLIMIT 1;\n",
+        "options": {
+          "queryReplacement": "=={{ $json.normalizedTitle }}\n"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        944,
+        896
+      ],
+      "id": "7472332c-9d4c-43f1-8ccc-1d6889cf4af5",
+      "name": "Get if book exists",
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "iyOnMI3q3uSALgsc",
+          "name": "Postgres account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const book = $input.first().json;\nconst formats = book.formats || {};\n\n// Super reliable order for text extraction\nconst priority = [\n  'text/plain; charset=us-ascii',       // Pure text, best\n  'text/plain',                         // Sometimes without charset\n  'text/html',                          // HTML → easy strip\n  'application/pdf',                    // Rare, last resort\n  'application/epub+zip'                // Only if desperate\n];\n\nlet bestFormat = null;\nlet bestUrl = null;\n\nfor (const key of priority) {\n  if (formats[key]) {\n    bestFormat = key;\n    bestUrl = formats[key];\n    break;\n  }\n}\n\nif (!bestUrl) {\n  throw new Error(`No usable text format found for \"${book.title}\"`);\n}\n\nreturn [{\n  json: {\n    title: book.title,\n    id: book.id,\n    authors: book.authors?.map(a => a.name).join(', ') || 'Unknown',\n    downloadUrl: bestUrl,\n    format: bestFormat,\n    note: `Selected: ${bestFormat} (plain text preferred for easy extraction)`\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2064,
+        864
+      ],
+      "id": "f7e24c91-d5be-4ea7-95c3-7fd4de752c02",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.downloadUrl }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2288,
+        864
+      ],
+      "id": "4a2b3bc9-4582-4c9a-a5b5-e35fd9b54b83",
+      "name": "Download Book File",
+      "retryOnFail": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "7ebaecd0-c7b1-43fe-9367-2881c2aa2189",
+              "leftValue": "={{ $json.results }}",
+              "rightValue": "",
+              "operator": {
+                "type": "array",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1616,
+        992
+      ],
+      "id": "fd482cd6-4ab6-41f7-be10-e5ff2f4e35c0",
+      "name": "If2"
+    },
+    {
+      "parameters": {
+        "url": "=https://gutendex.com/books/?search= {{ $('Request Validator').item.json.originalTitle }}",
+        "options": {}
+      },
+      "id": "ca64997d-a11e-44ce-88ce-a1ba68720b5e",
+      "name": "Search Gutendex",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1392,
+        992
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "toText",
+        "sourceProperty": "data",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        2960,
+        864
+      ],
+      "id": "ba835bef-3e6d-4dc2-8a77-a912e24f12eb",
+      "name": "Convert to File"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.format }}",
+                    "rightValue": "text/plain; charset=us-ascii",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "9e9f5c55-4f82-4487-ba94-bc750054c172"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "cd3d36ae-8918-42c1-b476-88373b2dd496",
+                    "leftValue": "={{ $json.format }}",
+                    "rightValue": "text/html",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "a28a5a67-0b0d-4a74-8232-881c174252fb",
+                    "leftValue": "={{ $json.format }}",
+                    "rightValue": "application/pdf",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        2512,
+        848
+      ],
+      "id": "e2be8344-5e73-4cf1-9ad2-51b1ddc33bf5",
+      "name": "Switch1"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemma-3-27b-it",
+          "mode": "list",
+          "cachedResultName": "models/gemma-3-27b-it"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=You are a skilled video editor and visual storyteller specializing in transforming book narration scripts into dynamic YouTube videos. Your mission is to break the provided narration text into an optimal number of visual scenes tailored to the specific content, pacing, and natural structure of the book summary—do not default to a fixed range like 8-15; instead, create as many or as few scenes as genuinely needed for smooth, engaging visuals (typically 6–20 scenes depending on length, complexity, genre, and narrative beats).\n\nCRITICAL REQUIREMENTS:\n1. **Flexible Scene Count & Timing:** Determine the ideal number of scenes based on the narration's flow:\n   - Short, intense books or summaries → fewer scenes (6–10)\n   - Longer, multi-layered stories with many twists, characters, or locations → more scenes (10–20)\n   - Aim for each scene to cover 20–60 seconds of spoken narration (roughly 50–150 words per scene when spoken at ~150 wpm), but prioritize natural breaks over strict word counts.\n   - Break at meaningful narrative moments: major setting changes, character introductions/reintroductions, emotional shifts, key plot turns, revelations, reflective pauses, or climactic peaks.\n2. **Narration Fidelity:** The \"narration_text\" field must contain the EXACT verbatim excerpt from the provided narration script—no rephrasing, summarizing, shortening, or adding words. Scenes must chain together to reconstruct the full original narration without gaps, overlaps, or omissions.\n3. **Image Prompts:** Write hyper-detailed, production-ready prompts optimized for AI image generation or stock footage:\n   - Specific environment (e.g., \"a rain-slicked cobblestone street in 19th-century London at midnight\")\n   - Lighting & atmosphere (e.g., \"harsh sodium streetlamps cutting through thick fog, creating pools of orange light and deep black shadows\")\n   - Characters (e.g., \"a tall woman in a crimson cloak, hood partially obscuring her sharp green eyes and determined expression\")\n   - Mood & composition (e.g., \"low-angle shot emphasizing power and mystery, cinematic depth of field with foreground raindrops in sharp focus\")\n   - Artistic direction (e.g., \"hyper-realistic cinematic style like a Ridley Scott film, moody noir palette, subtle lens flare\")\n4. **Scene Types:** Classify each scene clearly as one of:\n   - \"establishing_shot\" — wide/introductory views of settings or worlds\n   - \"character_focus\" — close-ups or medium shots emphasizing people, expressions, or development\n   - \"action\" — dynamic movement, conflict, chases, battles, or rapid events\n   - \"reflection\" — quieter, contemplative moments, inner thoughts, or thematic pauses\n   - \"climax\" — high-tension peaks, dramatic confrontations, or major resolutions (use sparingly, usually 1–3 per video)\n5. **Genre & Tone Alignment:** Adapt visual language to the book's genre (e.g., ethereal and symbolic for fantasy/philosophy, gritty realism for thrillers, sepia-toned archival feel for historical nonfiction).\n6. **Visual Progression:** Create a deliberate arc: open with broader establishing shots, move into character-driven and action sequences, build toward climactic visuals, and close with resonant, reflective, or iconic imagery that echoes the outro.\n\nNARRATION TEXT:\n{{ $json.raw_text }}\n\nOUTPUT:\nA valid JSON array of scene objects ONLY, in this exact structure:\n[\n  {\n    \"narration_text\": \"Exact verbatim excerpt from the narration (50–150 words)\",\n    \"image_prompt\": \"Extremely detailed image generation prompt\",\n    \"scene_type\": \"establishing_shot\" | \"character_focus\" | \"action\" | \"reflection\" | \"climax\"\n  },\n  ...\n]\nNo markdown, no explanations, no additional text—begin directly with [ and end with ]. The concatenated narration_text across all scenes must equal the complete original narration."
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        5232,
+        512
+      ],
+      "id": "ee610094-4bb9-43e9-9118-f5088d54dcd5",
+      "name": "Scene Breaker",
+      "retryOnFail": true
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        5808,
+        512
+      ],
+      "id": "3ea97c8c-3338-43c1-a451-bf785be05c68",
+      "name": "Loop Over Scenes"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.cloudinary.com/v1_1/<Cloudinary cloud name>/video/upload",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "audio"
+            },
+            {
+              "name": "upload_preset",
+              "value": "Youtube n8n "
+            },
+            {
+              "name": "resource_type",
+              "value": "video"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "410913b7-d803-47cd-a462-b028595daf01",
+      "name": "Upload Audio to Cloudinary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        6256,
+        240
+      ],
+      "retryOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.cloudinary.com/v1_1/<Cloudinary cloud name>/image/upload",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "image"
+            },
+            {
+              "name": "upload_preset",
+              "value": "Youtube n8n"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        6256,
+        432
+      ],
+      "id": "86aed9cf-6cf4-423d-915f-2acde0aeef05",
+      "name": "Upload Image to Cloudinary",
+      "retryOnFail": true
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        6480,
+        336
+      ],
+      "id": "6b442387-35b5-4e73-a93b-078b44965e81",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.cloudinary.com/v1_1/drdujsp3a/video/upload",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "file",
+              "value": "={{ $json.generated_video.url }}"
+            },
+            {
+              "name": "upload_preset",
+              "value": "Youtube n8n"
+            },
+            {
+              "name": "resource_type",
+              "value": "video"
+            },
+            {
+              "name": "public_id",
+              "value": "={{ 'scene_' + String($json.sceneIndex || 0).padStart(3, '0') + '_' + Date.now() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "5e2ed029-9621-4bdb-b9ce-132f331ccd2c",
+      "name": "Save Scene Video",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        7152,
+        336
+      ],
+      "retryOnFail": true
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.final_video_url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "final_video"
+            }
+          }
+        }
+      },
+      "id": "12c0ac93-c37e-4a3c-b2d8-0d16a5256691",
+      "name": "Stitch Final Video",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        6256,
+        624
+      ],
+      "retryOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst cloudName = \"drdujsp3a\";\n\nconst sceneIds = items\n  .map(item => item.json.public_id)\n  .filter(id => id && id.startsWith('scene_'));\n\nif (sceneIds.length === 0) {\n  throw new Error(\"No scene public_ids found for concatenation\");\n}\n\n// First scene is the base\nconst baseScene = sceneIds[0];\n\n// Build splice chain for remaining scenes only\nlet spliceChain = '';\nsceneIds.slice(1).forEach(id => {\n  const escapedId = id.replace(/\\//g, ':');\n  spliceChain += `fl_splice,l_video:${escapedId},fl_layer_apply/`;\n});\n\nconst finalUrl = `https://res.cloudinary.com/${cloudName}/video/upload/` +\n                 spliceChain +\n                 `f_mp4,fl_force_strip/${baseScene}.mp4`;\n\nreturn [{\n  json: {\n    final_video_url: finalUrl,\n    scene_count: sceneIds.length,\n    debug_ids: sceneIds\n  }\n}];\n"
+      },
+      "id": "7b891542-ade0-461c-8ba7-3ddbd4453e30",
+      "name": "Build Manifest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6032,
+        624
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "video",
+        "operation": "upload",
+        "title": "=<Video Title>",
+        "regionCode": "PK",
+        "categoryId": "24",
+        "binaryProperty": "final_video",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.youTube",
+      "typeVersion": 1,
+      "position": [
+        6480,
+        624
+      ],
+      "id": "0e8bf97c-a2bb-4343-9c84-e6c830098ea7",
+      "name": "Upload a video",
+      "credentials": {
+        "youTubeOAuth2Api": {
+          "id": "McyMuCuC42fHKGfj",
+          "name": "YouTube account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "add-book",
+        "responseMode": "lastNode",
+        "options": {
+          "binaryPropertyName": "data"
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        272,
+        1600
+      ],
+      "id": "5e7fab48-23e8-4b99-bd7a-f21073434722",
+      "name": "Add Book",
+      "webhookId": "56ef6c04-4517-4c7d-968a-fc27c3aa5ff1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get inputs\nconst body = $json.body || {};\nconst binary = $input.first().binary || {};\n\n// Helper to get the file data regardless of the key name (data, data0, file)\nconst binaryKeys = Object.keys(binary);\nconst fileKey = binaryKeys.length > 0 ? binaryKeys[0] : null;\n\nif (!fileKey) {\n  throw new Error('Missing file upload');\n}\n\nif (!body.title || typeof body.title !== 'string') {\n  throw new Error('Missing or invalid title');\n}\n\nconst title = body.title.trim();\nconst normalized_title = title.toLowerCase()\n  .replace(/[^a-z0-9\\s]/g,\"\")\n  .trim()\n  .replace(/\\s+/g, \"_\");\n\nreturn [{\n  json: {\n    title,\n    normalized_title,\n    source: body.source || 'upload'\n  },\n  binary: {\n    // Ensure we pass the file under a standard key 'file' for the S3 node\n    file: binary[fileKey]\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        496,
+        1600
+      ],
+      "id": "c2dc4ee6-97df-4866-bcda-f9b5aa254a68",
+      "name": "Request Validator1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "22de3720-1fa8-45f9-aa5a-dc9ce2119736",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        944,
+        1680
+      ],
+      "id": "8d378523-bc71-4564-9c8f-2d26c0997235",
+      "name": "If1"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO media_assets (book_id, file_path)\nVALUES ($1, $2);\n",
+        "options": {
+          "queryReplacement": "={{ $json.id }},\n{{ `books/${$('Request Validator1').item.json.normalized_title}.pdf` }}\n"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1840,
+        1504
+      ],
+      "id": "bae52745-33e4-4c1d-8915-86bfc8cfb4e1",
+      "name": "Add Book  metadata",
+      "credentials": {
+        "postgres": {
+          "id": "iyOnMI3q3uSALgsc",
+          "name": "Postgres account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={\n  \"status\": \"created\",\n  \"book_id\":  {{ $('Add Book1').item.json.id }},\n  \"normalized_title\": \"{{ $('Request Validator1').item.json.normalized_title }}\"\n}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2064,
+        1504
+      ],
+      "id": "048253cb-a7ff-4f95-861c-444ee451eba4",
+      "name": "response"
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={\n  \"status\": \"exists\",\n  \"message\": \"Book already exists\",\n  \"book_id\": {{$json.id}}\n}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1168,
+        1728
+      ],
+      "id": "7ef3bd6e-b620-46e7-838f-7915df3772c4",
+      "name": "response1"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id\nFROM books\nWHERE normalized_title = $1;\n",
+        "options": {
+          "queryReplacement": "={{ $('Request Validator1').item.json.normalized_title }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        720,
+        1680
+      ],
+      "id": "9c77add0-7e98-425d-9623-2f86184949d0",
+      "name": "Check if book already exists1",
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "iyOnMI3q3uSALgsc",
+          "name": "Postgres account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "bucketName": "data",
+        "fileName": "=books/{{ $('Request Validator1').item.json.normalized_title }}.pdf",
+        "binaryPropertyName": "file",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.s3",
+      "typeVersion": 1,
+      "position": [
+        1392,
+        1504
+      ],
+      "id": "d540a78c-147a-4d48-bd4c-b0cd583b1a72",
+      "name": "Upload a file",
+      "credentials": {
+        "s3": {
+          "id": "w3AkBsCO1Ua0VjEj",
+          "name": "S3 account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO books (original_title, normalized_title, source)\nVALUES ($1, $2, $3)\nRETURNING id;\n",
+        "options": {
+          "queryReplacement": "={{ $('Request Validator1').item.json.title }},{{ $('Request Validator1').item.json.normalized_title }},{{ $('Request Validator1').item.json.source }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1616,
+        1504
+      ],
+      "id": "276b6c2e-6de3-4727-8366-d4a48b7dcbab",
+      "name": "Add Book1",
+      "credentials": {
+        "postgres": {
+          "id": "iyOnMI3q3uSALgsc",
+          "name": "Postgres account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch",
+        "useDataOfInput": 2
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1168,
+        1504
+      ],
+      "id": "18231426-71b8-4e57-ac99-db3c1b3cb877",
+      "name": "Merge1"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5678/webhook-test/add-book",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "title",
+              "value": "={{ $('Request Validator').item.json.originalTitle }}"
+            },
+            {
+              "name": "source",
+              "value": "={{ $('Download Book File').item.json.downloadUrl }}"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "0ac66e18-2fdd-4b66-b38a-5670971083f6",
+      "name": "Submit to Add-Book Webhook",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3184,
+        864
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "{\n  \"json\": {\n    \"message\": \"Book not found. Please upload the book yourself.\"\n  }\n}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1840,
+        1056
+      ],
+      "id": "50eaa5de-7fb4-436a-9317-ecf4b13cebb0",
+      "name": "Book not found"
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "results",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        1840,
+        864
+      ],
+      "id": "32d04ff4-f414-4639-b21a-c1eaa8c4d500",
+      "name": "Split and get First Book"
+    },
+    {
+      "parameters": {
+        "bucketName": "<YOUR S3 BUCKET NAME>",
+        "fileKey": "=books/{{ $json.file_path.split('/')[1] }}"
+      },
+      "type": "n8n-nodes-base.s3",
+      "typeVersion": 1,
+      "position": [
+        2064,
+        576
+      ],
+      "id": "3484b1eb-b9f4-42ab-829e-2e2986d4d9e7",
+      "name": "Get book from S3",
+      "credentials": {
+        "s3": {
+          "id": "w3AkBsCO1Ua0VjEj",
+          "name": "S3 account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const binary = $binary.data;  // your S3 binary key\nconst fileName = $json.file_path.split('/').pop(); // e.g., dangerous_liaisons.pdf\nconst ext = (fileName.split('.').pop() || '').toLowerCase();\n\nlet operation;\nif (ext === 'pdf') {\n  operation = 'pdf';\n} else if (ext === 'epub') {\n  operation = 'epub';\n} else if (ext === 'txt') {\n  operation = 'text';\n} else {\n  throw new Error(`Unsupported file type: ${ext}`);\n}\n\n// Pass this to Extract from File node\nreturn [{\n  json: {\n    file_extension: ext,\n    operation\n  },\n  binary: {\n    data: binary\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2288,
+        576
+      ],
+      "id": "6825ea56-fba8-4aa5-952b-4a2c4b3ef20a",
+      "name": "Check File Extension"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.file_extension }}",
+                    "rightValue": "pdf",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "323d1a7f-207c-4507-bf4f-b72f5701c75a"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "dd4092f0-72f5-433c-9315-4f273f1add77",
+                    "leftValue": "={{ $json.file_extension }}",
+                    "rightValue": "txt",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        2512,
+        576
+      ],
+      "id": "e91900c0-f5d9-4f6f-adc3-3d440e7d4964",
+      "name": "Switch(ext)"
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        2736,
+        528
+      ],
+      "id": "0071ce56-1cb2-420c-a28b-d85904923b72",
+      "name": "Extract from pdf"
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        2736,
+        848
+      ],
+      "id": "9a7a60db-2655-4b0a-95ee-c8561c65a8e2",
+      "name": "Extract from txt"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.exceedsLimit }}",
+                    "rightValue": false,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "equals"
+                    },
+                    "id": "0e44bfb6-03d5-4fbb-bd29-abe9849c63d7"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "15d585de-65ef-4e39-9cf3-5e55faf6d591",
+                    "leftValue": "={{ $json.exceedsLimit }}",
+                    "rightValue": true,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        3632,
+        624
+      ],
+      "id": "4eebdacd-c99a-4848-a875-5117635690cb",
+      "name": "Switch(on token limit)"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        4080,
+        704
+      ],
+      "id": "3a149753-c58a-4f78-a99f-c9b044828f53",
+      "name": "Loop Over chunks"
+    },
+    {
+      "parameters": {
+        "jsCode": "// In \"Summaries cleaner\" node\nconst summaries = $input.all()\n  .sort((a, b) => a.json.chunkIndex - b.json.chunkIndex) // SORT BY INDEX\n  .map(item => item.json.content.parts[0].text.trim());\n\nreturn [{\n  json: {\n    summaries,\n    combinedText: summaries.join('\\n\\n--- CHUNK BREAK ---\\n\\n'),\n    totalChunks: summaries.length\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4368,
+        608
+      ],
+      "id": "9603f260-08b3-4601-9777-b0c9bbc2e4f4",
+      "name": "Sumarries cleaner"
+    },
+    {
+      "parameters": {
+        "amount": 1,
+        "unit": "minutes"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        4720,
+        864
+      ],
+      "id": "921a95a8-393c-4ee9-bcc8-60ece350c811",
+      "name": "Wait 1 minute",
+      "webhookId": "c0f37dc5-214e-4510-8500-a84e12856241"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=You are the MASTER NARRATOR — the final architect of a world-class 5–10 minute YouTube book summary video. You now possess complete knowledge of the entire book through {{ $json.summaries.length }} expertly crafted chunk summaries. You see the full arc, every character’s journey, every rising and falling beat, every theme that emerges across the whole work.\nYour mission: Fuse every chunk into ONE seamless, cinematic narration script that feels like a single, electrifying story told by the best storytelling channels on YouTube (e.g., The Book Leo, Escaping Ordinary, Fiction Beast level quality).\nCRITICAL SUPERPOWERS & REQUIREMENTS:\n\nTotal omniscience: You know who everyone is, what they want, how they change—no redundant re-introductions. First appearance of any character gets one perfect, memorable tag; after that, just use names.\nCinematic flow: Create butter-smooth transitions between chunks (“Yet the nightmare was only beginning…” / “Three days and one betrayal later…” / “What no one could have foreseen was waiting in the capital…”).\nEscalating drama: Re-arrange emphasis (never chronology) if needed to heighten suspense, but preserve the book’s actual sequence of major events.\nStrong YouTube BOOK INTRO (150–250 words):\nOpen with the single most gripping hook from the entire book (dramatic scene, impossible dilemma, shocking revelation—first 10 seconds must be electric).\nImmediately name the book + author.\nGive a tantalizing one-sentence premise.\nTease the emotional journey / big ideas without spoilers (“In the next few minutes you’ll witness a quiet bookseller become the most dangerous man in the empire… and discover why his choice still haunts readers today.”)\nEnd intro with a clear transition into the story (“Let’s begin where it all started…”).\n\nMain Story (900–1400 words): Pure chronological narrative fire—vivid scenes, sensory detail, dialogue snippets, “but then…” turns, mounting stakes, emotional peaks.\nPowerful OUTRO (250–400 words):\nReflect on the book’s deepest truth / emotional core / modern relevance.\nDeliver 1–3 concrete takeaways viewers can carry into their own lives.\nClose with a lingering, thought-provoking question or a haunting final image/quote.\nOptional light CTA (“If this story moved you, drop the title in the comments—I read every one.”)\n\nStyle bible: Vary pacing ruthlessly. Short punches for tension. Lyrical flow for wonder or heartbreak. Thriller phrasing (“What they didn’t know yet…” / “Against every instinct screaming to run…”). Rich sensory palette.\n\nTarget length: 1400–2200 words (≈6–9 minutes spoken at engaging pace).\nCHUNK SUMMARIES:\n{{ $json.combinedText }}\nOUTPUT:\nOnly the complete narration script — intro flowing straight into story flowing straight into outro. No labels, no headers, no commentary, no markdown. Just raw, voice-ready storytelling text."
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        4656,
+        608
+      ],
+      "id": "bbbf32c1-cdca-4bd0-a12a-a9b21e079057",
+      "name": "Master Chunk Sumarrizer",
+      "retryOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const rawText = $input.first().json.content.parts[0].text;\n\n// Aggressive cleanup\nlet cleanText = rawText\n  .replace(/```json/gi, '')\n  .replace(/```/g, '')\n  .replace(/^[^[]*/, '') // Remove everything before first [\n  .replace(/[^\\]]*$/, '') // Remove everything after last ]\n  .trim();\n\nlet scenes;\ntry {\n  scenes = JSON.parse(cleanText);\n} catch (e) {\n  // Fallback: Try to extract JSON with regex\n  const jsonMatch = cleanText.match(/\\[[\\s\\S]*\\]/);\n  if (jsonMatch) {\n    scenes = JSON.parse(jsonMatch[0]);\n  } else {\n    throw new Error(`Failed to parse scenes: ${e.message}`);\n  }\n}\n\n// Validation\nif (!Array.isArray(scenes) || scenes.length < 3) {\n  throw new Error(`Invalid scene count: ${scenes.length}. Need 3+`);\n}\n\nif (scenes.length > 30) {\n  throw new Error(`Too many scenes: ${scenes.length}. Max 30.`);\n}\n\n// Validate structure\nscenes.forEach((scene, i) => {\n  if (!scene.narration_text || !scene.image_prompt) {\n    throw new Error(`Scene ${i} missing required fields`);\n  }\n});\n\nreturn scenes.map((scene, index) => ({\n  json: {\n    ...scene,\n    sceneIndex: index,\n    totalScenes: scenes.length\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5584,
+        512
+      ],
+      "id": "030d5c19-3ef0-4e29-98c2-feaf85c2ee8b",
+      "name": "Scene Parser"
+    },
+    {
+      "parameters": {
+        "url": "=https://image.pollinations.ai/prompt/{{ $json.image_prompt }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "image"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        6032,
+        432
+      ],
+      "id": "dbecb248-ac18-45e8-827b-a81f1205acfa",
+      "name": "Image Genration",
+      "retryOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// items = [{ json: audio }, { json: image }]\n\nconst audioItem = items.find(i => i.json.is_audio === true);\nconst imageItem = items.find(i => i.json.resource_type === 'image');\n\nif (!audioItem) {\n  throw new Error('Audio asset not found in merged Cloudinary response');\n}\n\nif (!imageItem) {\n  throw new Error('Image asset not found in merged Cloudinary response');\n}\n\nconst audio = audioItem.json;\nconst image = imageItem.json;\n\nreturn [\n  {\n    json: {\n      audio: {\n        public_id: audio.public_id,\n        duration: audio.duration,\n        url: audio.secure_url\n      },\n      image: {\n        public_id: image.public_id,\n        url: image.secure_url\n      }\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6704,
+        336
+      ],
+      "id": "94de9263-d438-4a99-b650-b226ca1354e7",
+      "name": "Extracts audio and image data"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Modern n8n syntax: process all incoming items\nconst items = $input.all();\nconst cloudName = \"drdujsp3a\";\nconst width = 1280;\nconst height = 720;\n\nreturn items.map(item => {\n  const audioPublicId = item.json.audio?.public_id;\n  const imagePublicId = item.json.image?.public_id;\n\n  if (!audioPublicId || !imagePublicId) {\n    return { \n      json: { ...item.json, error: \"Missing public_id for audio or image\" } \n    };\n  }\n\n  // Cloudinary requires slashes in transformations to be replaced by colons\n  const escapedImageId = imagePublicId.replace(/\\//g, ':');\n  const escapedAudioId = audioPublicId.replace(/\\//g, ':');\n\n  // Transformation: Layer the image, resize to fill 720p, apply\n  const transformation = `l_${escapedImageId},w_${width},h_${height},c_fill/fl_layer_apply`;\n\n  // Base URL: The audio file (must be uploaded as resource_type: video)\n  const videoUrl = `https://res.cloudinary.com/${cloudName}/video/upload/${transformation}/${audioPublicId}.mp4`;\n\n  return {\n    json: {\n      ...item.json,\n      generated_video: {\n        url: videoUrl,\n        width,\n        height,\n        format: \"mp4\"\n      }\n    }\n  };\n});"
+      },
+      "id": "bffbbedc-7e39-4f3a-929d-66281a47b73d",
+      "name": "Generate Video URL ",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6928,
+        336
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "bd890cdf-d0fa-4d19-9c67-24bbcb06808d",
+              "name": "public_id",
+              "value": "={{ $json.public_id }}",
+              "type": "string"
+            },
+            {
+              "id": "62ab0987-0b0d-41f6-b7d0-315c23373fa9",
+              "name": "url",
+              "value": "={{ $json.url }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        7376,
+        464
+      ],
+      "id": "9de967e9-2c91-4471-bc43-8caf60a4acee",
+      "name": "Seprate public ID and URL"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.json.message }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        2064,
+        1056
+      ],
+      "id": "dfab8560-a84f-4453-a236-f030aab0909f",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "Video successfully uploaded",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        6704,
+        624
+      ],
+      "id": "dc3a3f79-e0c3-4f2e-beb4-85a28ef5f124",
+      "name": "Respond to Webhook1"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.inputType }}",
+                    "rightValue": "text",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "23e70a1c-48d2-4bb5-a9dd-a9a46206b0b3"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "3be69826-652a-47bd-97fd-bdf28d20a77b",
+                    "leftValue": "={{ $json.inputType }}",
+                    "rightValue": "file",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        720,
+        816
+      ],
+      "id": "11fc664d-8b83-4545-8798-56f383bdaa04",
+      "name": "Query/File"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "93027d9f-0345-4c46-88ed-a2684d80316b",
+              "name": "data",
+              "value": "={{ $json.text }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2960,
+        528
+      ],
+      "id": "7f632cfd-7b85-48d1-8c72-dd1e206e87a2",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "jsCode": "let text = $input.first().json.data ||$input.first().json.text ;\n\nif (!text || typeof text !== 'string') {\n  throw new Error('No text to normalize');\n}\n\n// Only clean Gutenberg headers if they exist\nif (/PROJECT GUTENBERG/i.test(text)) {\n  const startMarkers = [\n    /\\*\\*\\* START OF (?:THE )?PROJECT GUTENBERG EBOOK .+? \\*\\*\\*/i,\n    /\\*\\*\\*START OF THIS PROJECT GUTENBERG EBOOK .+?\\*\\*\\*/i,\n  ];\n\n  for (const marker of startMarkers) {\n    const match = text.match(marker);\n    if (match) {\n      text = text.slice(match.index + match[0].length);\n      break;\n    }\n  }\n\n  const endMarkers = [\n    /\\*\\*\\* END OF (?:THE )?PROJECT GUTENBERG EBOOK .+? \\*\\*\\*/i,\n    /\\*\\*\\*END OF THIS PROJECT GUTENBERG EBOOK .+?\\*\\*\\*/i,\n  ];\n\n  for (const marker of endMarkers) {\n    const match = text.match(marker);\n    if (match) {\n      text = text.slice(0, match.index);\n      break;\n    }\n  }\n}\n\n// Always normalize whitespace\ntext = text\n  .trim()\n  .replace(/\\r\\n/g, '\\n')\n  .replace(/\\n{3,}/g, '\\n\\n')\n  .replace(/^\\s+/gm, '');\n\nreturn [{\n  json: {\n    cleanedText: text,\n    textLength: text.length,\n    source: /PROJECT GUTENBERG/i.test(text)\n      ? 'gutendex'\n      : 'other'\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3184,
+        624
+      ],
+      "id": "8f87aef6-87e9-4ad7-b02b-572def35ee6a",
+      "name": "Clean Text"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=You are a cinematic storyteller specializing in serialized book narration. You are processing CHUNK {{ $json.chunkIndex + 1 }} of {{ $json.totalChunks }} from a larger book.\nYour sole mission: Deliver a vivid, self-contained narrative summary of THIS chunk that feels like a gripping chapter excerpt—rich enough to stand alone, yet perfectly shaped for later seamless stitching into the full story.\nCRITICAL RULES:\n\nPure storyteller voice: immersive, dramatic, sensory-driven—like narrating a movie trailer or audiobook climax. Never sound like a summary, report, or analysis.\nFocus exclusively on WHAT HAPPENS: key events, character decisions, conflicts, revelations, dialogue fragments, and emotional turning points.\nBring characters alive with one vivid, unforgettable tag the first time they appear in this chunk (e.g., “Liora, the silver-haired smuggler whose laugh could cut glass”).\nPreserve every beat of tension, fear, hope, betrayal, wonder—make the emotion pulse.\nUse cinematic language: short, breathless sentences for action; longer, lyrical ones for atmosphere and inner turmoil.\nEnd with exactly one short contextual tag in brackets: [Beginning / Middle rising action / Middle deepening conflict / Climax / Resolution / Epilogue feel]\n\nTarget: 350–550 words of pure narrative fire.\nCHUNK TEXT:\n{{ $json.chunkText }}\nOUTPUT:\nOnly the raw narrative summary text + the single bracketed contextual tag at the very end. Nothing else.",
+              "role": "model"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        4304,
+        800
+      ],
+      "id": "65825b79-ad04-4893-bbde-1ef7c9823b58",
+      "name": "Message a model"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.elevenlabs.io/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "xi-api-key",
+              "value": "<YOUR-API-KEY>"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"text\": {{ JSON.stringify($json.narration_text) }},\n  \"model_id\": \"eleven_multilingual_v2\"\n}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "audio"
+            }
+          }
+        }
+      },
+      "id": "55d368b6-5dc7-4399-855f-eb84f620f90a",
+      "name": "ElevenLabs TTS1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        6032,
+        240
+      ],
+      "retryOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const bookText =$('Clean Text').first().json.cleanedText\n\nif (!bookText || typeof bookText !== 'string') {\n  throw new Error('No book text provided');\n}\n\nconst MAX_TOKENS = 250000;\nconst AVG_CHAR_PER_TOKEN = 4;\nconst maxCharsPerChunk = MAX_TOKENS * AVG_CHAR_PER_TOKEN;\n\nfunction chunkText(text, chunkSize) {\n  const chunks = [];\n  let start = 0;\n\n  while (start < text.length) {\n    let end = start + chunkSize;\n\n    if (end < text.length) {\n      const lastPeriod = text.lastIndexOf('.', end);\n      if (lastPeriod > start) {\n        end = lastPeriod + 1;\n      }\n    }\n\n    chunks.push(text.slice(start, end).trim());\n    start = end;\n  }\n\n  return chunks;\n}\n\nconst chunks =\n  bookText.length > maxCharsPerChunk\n    ? chunkText(bookText, maxCharsPerChunk)\n    : [bookText];\n\nreturn chunks.map((chunk, index) => ({\n  json: { chunkIndex: index, chunkText: chunk }\n}));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3856,
+        704
+      ],
+      "id": "1209faef-9f27-46b4-85f5-1e40a062b497",
+      "name": "Convert to 250k chunks"
+    },
+    {
+      "parameters": {
+        "jsCode": "const text =\n  $input.first().json?.content?.parts?.[0]?.text;\n\nif (!text) {\n  throw new Error('No text found in Gemini response');\n}\n\n// Prepare safe versions\nreturn [{\n  json: {\n    raw_text: text,\n    text_json: JSON.stringify(text)\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5008,
+        512
+      ],
+      "id": "1667c296-6e9e-4ae2-912f-7c1ebdb3db8d",
+      "name": "Summary Cleaner"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Request Validator": {
+      "main": [
+        [
+          {
+            "node": "Query/File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Get book from S3",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Search Gutendex",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Main webhook": {
+      "main": [
+        [
+          {
+            "node": "Request Validator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check token limit": {
+      "main": [
+        [
+          {
+            "node": "Switch(on token limit)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Master Sumarrizer": {
+      "main": [
+        [
+          {
+            "node": "Summary Cleaner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get if book exists": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Download Book File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Book File": {
+      "main": [
+        [
+          {
+            "node": "Switch1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If2": {
+      "main": [
+        [
+          {
+            "node": "Split and get First Book",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Book not found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Gutendex": {
+      "main": [
+        [
+          {
+            "node": "If2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert to File": {
+      "main": [
+        [
+          {
+            "node": "Submit to Add-Book Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch1": {
+      "main": [
+        [
+          {
+            "node": "Extract from txt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract from txt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract from pdf",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scene Breaker": {
+      "main": [
+        [
+          {
+            "node": "Scene Parser",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Scenes": {
+      "main": [
+        [
+          {
+            "node": "Build Manifest",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Image Genration",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "ElevenLabs TTS1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Audio to Cloudinary": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Image to Cloudinary": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Extracts audio and image data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Scene Video": {
+      "main": [
+        [
+          {
+            "node": "Seprate public ID and URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stitch Final Video": {
+      "main": [
+        [
+          {
+            "node": "Upload a video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Manifest": {
+      "main": [
+        [
+          {
+            "node": "Stitch Final Video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload a video": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add Book": {
+      "main": [
+        [
+          {
+            "node": "Request Validator1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Request Validator1": {
+      "main": [
+        [
+          {
+            "node": "Check if book already exists1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "If1": {
+      "main": [
+        [
+          {
+            "node": "response1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add Book  metadata": {
+      "main": [
+        [
+          {
+            "node": "response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check if book already exists1": {
+      "main": [
+        [
+          {
+            "node": "If1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload a file": {
+      "main": [
+        [
+          {
+            "node": "Add Book1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add Book1": {
+      "main": [
+        [
+          {
+            "node": "Add Book  metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge1": {
+      "main": [
+        [
+          {
+            "node": "Upload a file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Book not found": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split and get First Book": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get book from S3": {
+      "main": [
+        [
+          {
+            "node": "Check File Extension",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check File Extension": {
+      "main": [
+        [
+          {
+            "node": "Switch(ext)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch(ext)": {
+      "main": [
+        [
+          {
+            "node": "Extract from pdf",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract from txt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract from pdf": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract from txt": {
+      "main": [
+        [
+          {
+            "node": "Clean Text",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Convert to File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch(on token limit)": {
+      "main": [
+        [
+          {
+            "node": "Master Sumarrizer",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Convert to 250k chunks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over chunks": {
+      "main": [
+        [
+          {
+            "node": "Sumarries cleaner",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sumarries cleaner": {
+      "main": [
+        [
+          {
+            "node": "Master Chunk Sumarrizer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 1 minute": {
+      "main": [
+        [
+          {
+            "node": "Loop Over chunks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Master Chunk Sumarrizer": {
+      "main": [
+        [
+          {
+            "node": "Summary Cleaner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scene Parser": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Scenes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Image Genration": {
+      "main": [
+        [
+          {
+            "node": "Upload Image to Cloudinary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extracts audio and image data": {
+      "main": [
+        [
+          {
+            "node": "Generate Video URL ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Video URL ": {
+      "main": [
+        [
+          {
+            "node": "Save Scene Video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Seprate public ID and URL": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Scenes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query/File": {
+      "main": [
+        [
+          {
+            "node": "Get if book exists",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract from pdf",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Clean Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clean Text": {
+      "main": [
+        [
+          {
+            "node": "Check token limit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "Wait 1 minute",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ElevenLabs TTS1": {
+      "main": [
+        [
+          {
+            "node": "Upload Audio to Cloudinary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert to 250k chunks": {
+      "main": [
+        [
+          {
+            "node": "Loop Over chunks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summary Cleaner": {
+      "main": [
+        [
+          {
+            "node": "Scene Breaker",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "cf85a16d-991f-4786-ae6b-10668b2558d9",
+  "meta": {
+    "instanceId": "28af7a70eb0a2616856fc11060cc5edc94729277f526fc7c8408f71a94a34ffc"
+  },
+  "id": "DC8rsct_a79d7z-XLupXB",
+  "tags": []
+}
