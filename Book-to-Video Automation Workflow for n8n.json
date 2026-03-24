@@ -1,5 +1,4 @@
 {
-  "name": "Book-to-Video Automation Workflow for n8n",
   "nodes": [
     {
       "parameters": {
@@ -495,7 +494,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const items = $input.all();\nconst cloudName = \"drdujsp3a\";\n\nconst sceneIds = items\n  .map(item => item.json.public_id)\n  .filter(id => id && id.startsWith('scene_'));\n\nif (sceneIds.length === 0) {\n  throw new Error(\"No scene public_ids found for concatenation\");\n}\n\n// First scene is the base\nconst baseScene = sceneIds[0];\n\n// Build splice chain for remaining scenes only\nlet spliceChain = '';\nsceneIds.slice(1).forEach(id => {\n  const escapedId = id.replace(/\\//g, ':');\n  spliceChain += `fl_splice,l_video:${escapedId},fl_layer_apply/`;\n});\n\nconst finalUrl = `https://res.cloudinary.com/${cloudName}/video/upload/` +\n                 spliceChain +\n                 `f_mp4,fl_force_strip/${baseScene}.mp4`;\n\nreturn [{\n  json: {\n    final_video_url: finalUrl,\n    scene_count: sceneIds.length,\n    debug_ids: sceneIds\n  }\n}];\n"
+        "jsCode": "const items = $input.all();\nconst cloudName = \"<Cloudianry cloud name>\";\n\nconst sceneIds = items\n  .map(item => item.json.public_id)\n  .filter(id => id && id.startsWith('scene_'));\n\nif (sceneIds.length === 0) {\n  throw new Error(\"No scene public_ids found for concatenation\");\n}\n\n// First scene is the base\nconst baseScene = sceneIds[0];\n\n// Build splice chain for remaining scenes only\nlet spliceChain = '';\nsceneIds.slice(1).forEach(id => {\n  const escapedId = id.replace(/\\//g, ':');\n  spliceChain += `fl_splice,l_video:${escapedId},fl_layer_apply/`;\n});\n\nconst finalUrl = `https://res.cloudinary.com/${cloudName}/video/upload/` +\n                 spliceChain +\n                 `f_mp4,fl_force_strip/${baseScene}.mp4`;\n\nreturn [{\n  json: {\n    final_video_url: finalUrl,\n    scene_count: sceneIds.length,\n    debug_ids: sceneIds\n  }\n}];\n"
       },
       "id": "7b891542-ade0-461c-8ba7-3ddbd4453e30",
       "name": "Build Manifest",
@@ -1101,7 +1100,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Modern n8n syntax: process all incoming items\nconst items = $input.all();\nconst cloudName = \"drdujsp3a\";\nconst width = 1280;\nconst height = 720;\n\nreturn items.map(item => {\n  const audioPublicId = item.json.audio?.public_id;\n  const imagePublicId = item.json.image?.public_id;\n\n  if (!audioPublicId || !imagePublicId) {\n    return { \n      json: { ...item.json, error: \"Missing public_id for audio or image\" } \n    };\n  }\n\n  // Cloudinary requires slashes in transformations to be replaced by colons\n  const escapedImageId = imagePublicId.replace(/\\//g, ':');\n  const escapedAudioId = audioPublicId.replace(/\\//g, ':');\n\n  // Transformation: Layer the image, resize to fill 720p, apply\n  const transformation = `l_${escapedImageId},w_${width},h_${height},c_fill/fl_layer_apply`;\n\n  // Base URL: The audio file (must be uploaded as resource_type: video)\n  const videoUrl = `https://res.cloudinary.com/${cloudName}/video/upload/${transformation}/${audioPublicId}.mp4`;\n\n  return {\n    json: {\n      ...item.json,\n      generated_video: {\n        url: videoUrl,\n        width,\n        height,\n        format: \"mp4\"\n      }\n    }\n  };\n});"
+        "jsCode": "// Modern n8n syntax: process all incoming items\nconst items = $input.all();\nconst cloudName = \"<Cloudinary cloud name>\";\nconst width = 1280;\nconst height = 720;\n\nreturn items.map(item => {\n  const audioPublicId = item.json.audio?.public_id;\n  const imagePublicId = item.json.image?.public_id;\n\n  if (!audioPublicId || !imagePublicId) {\n    return { \n      json: { ...item.json, error: \"Missing public_id for audio or image\" } \n    };\n  }\n\n  // Cloudinary requires slashes in transformations to be replaced by colons\n  const escapedImageId = imagePublicId.replace(/\\//g, ':');\n  const escapedAudioId = audioPublicId.replace(/\\//g, ':');\n\n  // Transformation: Layer the image, resize to fill 720p, apply\n  const transformation = `l_${escapedImageId},w_${width},h_${height},c_fill/fl_layer_apply`;\n\n  // Base URL: The audio file (must be uploaded as resource_type: video)\n  const videoUrl = `https://res.cloudinary.com/${cloudName}/video/upload/${transformation}/${audioPublicId}.mp4`;\n\n  return {\n    json: {\n      ...item.json,\n      generated_video: {\n        url: videoUrl,\n        width,\n        height,\n        format: \"mp4\"\n      }\n    }\n  };\n});"
       },
       "id": "bffbbedc-7e39-4f3a-929d-66281a47b73d",
       "name": "Generate Video URL ",
@@ -1358,7 +1357,6 @@
       "name": "Summary Cleaner"
     }
   ],
-  "pinData": {},
   "connections": {
     "Request Validator": {
       "main": [
@@ -2029,15 +2027,8 @@
       ]
     }
   },
-  "active": false,
-  "settings": {
-    "executionOrder": "v1",
-    "availableInMCP": false
-  },
-  "versionId": "cf85a16d-991f-4786-ae6b-10668b2558d9",
+  "pinData": {},
   "meta": {
     "instanceId": "28af7a70eb0a2616856fc11060cc5edc94729277f526fc7c8408f71a94a34ffc"
-  },
-  "id": "DC8rsct_a79d7z-XLupXB",
-  "tags": []
+  }
 }
