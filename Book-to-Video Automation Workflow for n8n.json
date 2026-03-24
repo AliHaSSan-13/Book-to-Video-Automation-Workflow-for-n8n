@@ -1,5 +1,5 @@
 {
-  "name": "My workflow 2",
+  "name": "Book-to-Video Automation Workflow for n8n",
   "nodes": [
     {
       "parameters": {
